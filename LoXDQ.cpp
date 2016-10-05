@@ -15,6 +15,7 @@
 #include <Shlwapi.h>
 
 //#define DEBUG
+//#define DLL
 
 // LoXDQ
 
@@ -59,10 +60,16 @@ VOID WINAPI WriteLog(HANDLE h, char *s);
 VOID WINAPI TimerProc();
 
 // DLL
-
+#ifdef DLL
 BOOL(WINAPI *LoInitialize)(DWORD dwDQXProcessID);
 INT(WINAPI *LoRead)(CHAR *buffer);
 BOOL(WINAPI *LoCheck)();
+#else
+BOOL WINAPI LoInitialize(DWORD dwProcessID);
+BOOL WINAPI LoCheck();
+INT WINAPI LoRead(CHAR * buffer);
+BOOL WINAPI DllMain(HINSTANCE hinst, DWORD dwReason, LPVOID reserved);
+#endif
 
 //
 
@@ -266,10 +273,38 @@ LRESULT CALLBACK WinProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
   return 0L;
 }
 
-//
+////
+
+VOID EnablePrivilege(LPTSTR lpPrivilegeName)
+{
+  HANDLE hToken;
+  LUID luid;
+  TOKEN_PRIVILEGES tp;
+  BOOL r;
+
+  r = OpenProcessToken(GetCurrentProcess(),
+                       TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                       &hToken);
+  if (!r) {
+    return;
+  }
+
+  r = LookupPrivilegeValue(NULL, lpPrivilegeName, &luid);
+  if (r) {
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    AdjustTokenPrivileges(hToken, FALSE, &tp, 0, 0, 0);
+  }
+
+  CloseHandle(hToken);
+}
+
+////
 
 int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     PSTR lpCmdLine, int nCmdShow) {
+#ifdef DLL
   HMODULE h = LoadLibraryEx(DllFile, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
   if (h == NULL) {
     MessageBox(NULL, "ERROR: CANNOT LOAD DLL", ExeBase, MB_OK);
@@ -278,6 +313,9 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
   LoInitialize = (BOOL(WINAPI *)(DWORD))GetProcAddress(h, "LoInitialize");
   LoCheck = (BOOL(WINAPI *)())GetProcAddress(h, "LoCheck");
   LoRead = (INT(WINAPI *)(CHAR *))GetProcAddress(h, "LoRead");
+#else
+  DllMain(hInstance, DLL_PROCESS_ATTACH, 0);
+#endif
 
   TCHAR lf[MAX_PATH+1] = "";
   time_t ti;
@@ -302,6 +340,9 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
   LPWSTR *argv;
   LPTSTR exebase;
   exebase = PathFindFileName(GetCommandLine());
+  if (exebase[lstrlen(exebase)-2] == '"') {
+    exebase[lstrlen(exebase)-2] = '\0';
+  }
   PathRemoveExtension(exebase);
 
   WNDCLASS wMain;
@@ -341,6 +382,8 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   hfFont = CreateFontIndirect(&lfFont);
   SelectObject(hdcMain, hfFont);
+
+  EnablePrivilege(SE_DEBUG_NAME);
 
   WriteState("Waiting Process...  ");
   SetTimer(hwMain, 14, 1000, NULL);
